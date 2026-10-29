@@ -1,0 +1,25 @@
+# Terraform working files and state
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/crash.log
+**/crash.*.log
+**/terraform.tfvars
+**/*.auto.tfvars
+
+# Credentials and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+**/kubeconfig*
+
+# Local environments
+.venv/
+__pycache__/
+.DS_Store
+
+# Preserve generated provider locks in Git
+!.terraform.lock.hcl
