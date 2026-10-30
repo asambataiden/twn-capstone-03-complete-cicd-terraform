@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/capstone03-bootstrap.log) 2>&1
+
+echo "Starting Capstone 03 bootstrap"
+
+dnf install -y docker
+
+systemctl enable --now docker
+
+install -d -m 0755 /opt/capstone03
+
+docker --version
+systemctl is-active --quiet docker
+
+echo "Capstone 03 bootstrap complete"
