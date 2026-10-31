@@ -23,3 +23,9 @@ __pycache__/
 
 # Preserve generated provider locks in Git
 !.terraform.lock.hcl
+
+# Local IDE settings
+.idea/
+
+# Machine-specific Terraform backend configuration
+/terraform/backend.hcl
