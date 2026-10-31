@@ -27,3 +27,8 @@ output "ssm_start_session_command" {
   description = "Command for an authorized operator to access the instance."
   value       = "aws ssm start-session --target ${aws_instance.app.id} --region ${var.aws_region}"
 }
+
+output "ecr_repository_url" {
+  description = "Private ECR repository URL for the Capstone 03 application."
+  value       = aws_ecr_repository.app.repository_url
+}
