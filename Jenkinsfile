@@ -86,7 +86,7 @@ PY
 
                     echo 'PASS: Shared Library ecrBuild completed'
                     echo "Local image: ${imageRef}"
-                    echo 'No ECR push performed'
+                    echo 'Build complete; publishing follows successful validation'
                 }
             }
         }
@@ -258,6 +258,56 @@ echo "PASS: Capstone 03 application smoke test"
                 }
             }
         }
+
+        stage('Publish Image to ECR') {
+            steps {
+                withCredentials([
+                    [
+                        $class: 'AmazonWebServicesCredentialsBinding',
+                        credentialsId: 'twn-capstone03-ecr-publisher',
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                    ]
+                ]) {
+                    withEnv([
+                        'AWS_DEFAULT_REGION=eu-north-1',
+                        'AWS_REGION=eu-north-1',
+                        'AWS_PAGER='
+                    ]) {
+                        script {
+                            String gitSha = sh(
+                                script: 'git rev-parse --short=12 HEAD',
+                                returnStdout: true
+                            ).trim()
+                            String imageTag = "git-${gitSha}".toString()
+
+                            // ecrPush rejects existing tags: ECR is immutable.
+                            String publishedRef = ecrPush(
+                                accountId: '591132357918',
+                                region: 'eu-north-1',
+                                repository: 'twn-capstone-03-app',
+                                tag: imageTag
+                            )
+
+                            if (publishedRef != env.IMAGE_REF) {
+                                error('Published image reference differs from tested image')
+                            }
+
+                            String digestRef = ecrImageDigest(
+                                accountId: '591132357918',
+                                region: 'eu-north-1',
+                                repository: 'twn-capstone-03-app',
+                                tag: imageTag
+                            )
+                            env.IMAGE_DIGEST_REF = digestRef
+                            echo "PASS: Published image: ${publishedRef}"
+                            echo "PASS: Immutable image digest: ${digestRef}"
+                            echo 'No SSM deployment performed'
+                        }
+                    }
+                }
+            }
+        }
     }
 
     post {
@@ -274,7 +324,7 @@ echo "Temporary container cleanup checked"
 
         success {
             echo 'SUCCESS: Capstone 03 CI validation completed.'
-            echo 'No ECR push or SSM deployment performed.'
+            echo 'SSM deployment not performed.'
         }
 
         failure {
