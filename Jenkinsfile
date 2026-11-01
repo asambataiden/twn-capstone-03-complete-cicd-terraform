@@ -70,6 +70,27 @@ PY
             }
         }
 
+
+stage('Deployment Regression Tests') {
+    steps {
+        sh '''#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Validate deployment script syntax ==="
+bash -n scripts/deploy-ec2.sh
+
+echo "=== Run rollback regression tests ==="
+python3 -m unittest discover \
+    -s tests \
+    -p 'test_deploy.py' \
+    -v
+
+echo "PASS: Deployment regression tests"
+'''
+    }
+}
+
+
         stage('Build Docker Image') {
             steps {
                 script {

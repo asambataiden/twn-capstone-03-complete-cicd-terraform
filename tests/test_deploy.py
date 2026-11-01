@@ -100,11 +100,26 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotEqual(p.returncode,0)
         self.assertIn('ROLLBACK FAILED',p.stderr)
 
+
     def test_unhealthy_baseline_rejected(self):
-        p,s = self.run_case('success', initial_health='unhealthy')
-        self.assertNotEqual(p.returncode,0)
-        self.assertEqual(s['image'],OLD)
-        self.assertIn('JSONDecodeError',p.stderr)  # preflight aborts before deployment; improve error text next
+        p, s = self.run_case(
+            'success',
+            initial_health='unhealthy'
+        )
+
+        # Deployment must fail when the existing release is unhealthy.
+        self.assertNotEqual(p.returncode, 0)
+
+        # The original image must remain unchanged.
+        self.assertEqual(s['image'], OLD)
+
+        # An intentional, readable error must be reported.
+        self.assertIn(
+            'Cannot establish a healthy rollback baseline',
+            p.stderr
+        )
+
+# preflight aborts before deployment; improve error text next
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

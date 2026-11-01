@@ -26,7 +26,27 @@ trap 'rm -rf "$DOCKER_CONFIG"' EXIT
 
 # Capture the last known good state before any container mutation.
 OLD_IMAGE="$(docker inspect "$CONTAINER_NAME" --format '{{.Config.Image}}')"
-OLD_VERSION="$(curl -fsS "$HEALTH_URL/" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+
+if ! OLD_VERSION="$(
+  curl --fail --silent --show-error \
+    --max-time 10 "$HEALTH_URL/" |
+  python3 -c '
+import json
+import sys
+
+try:
+    version = json.load(sys.stdin)["version"]
+    if not isinstance(version, str) or not version:
+        raise ValueError("Missing application version")
+    print(version)
+except (ValueError, KeyError, TypeError):
+    sys.exit(1)
+'
+)"; then
+  echo "ERROR: Cannot establish a healthy rollback baseline" >&2
+  exit 1
+fi
+
 OLD_HEALTH="$(docker inspect "$CONTAINER_NAME" --format '{{.State.Health.Status}}')"
 [[ "$OLD_IMAGE" =~ @sha256:[a-f0-9]{64}$ && "$OLD_VERSION" =~ ^[a-f0-9]{7,40}$ && "$OLD_HEALTH" == healthy ]] || {
   echo "ERROR: No verified healthy rollback baseline" >&2
