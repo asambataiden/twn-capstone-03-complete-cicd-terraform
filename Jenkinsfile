@@ -67,7 +67,7 @@ PY
                         accountId: '591132357918',
                         region: 'eu-north-1',
                         repository: 'twn-capstone-03-app',
-                        tag: "git-${gitSha}",
+                        tag: "git-${gitSha}".toString(),
                         dockerfile: 'app/Dockerfile',
                         context: 'app',
                         platform: 'linux/amd64'
