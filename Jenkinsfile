@@ -202,6 +202,65 @@ echo "PASS: Capstone 03 application smoke test"
         }
     }
 
+
+        stage('AWS Identity Preflight') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'twn-capstone03-ecr-publisher',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    withEnv([
+                        'AWS_DEFAULT_REGION=eu-north-1',
+                        'AWS_REGION=eu-north-1',
+                        'AWS_PAGER='
+                    ]) {
+                        sh '''#!/usr/bin/env bash
+        set -euo pipefail
+
+        EXPECTED_ACCOUNT="591132357918"
+        EXPECTED_ARN="arn:aws:iam::591132357918:user/twn-capstone03-ecr-publisher"
+
+        # Prevent an inherited profile or credential-file setting
+        # from changing the intended authentication source.
+        unset AWS_PROFILE AWS_SESSION_TOKEN
+        unset AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE
+
+        ACTUAL_ACCOUNT="$(
+            aws sts get-caller-identity \
+                --query Account \
+                --output text
+        )"
+
+        ACTUAL_ARN="$(
+            aws sts get-caller-identity \
+                --query Arn \
+                --output text
+        )"
+
+        if [[ "$ACTUAL_ACCOUNT" != "$EXPECTED_ACCOUNT" ]]; then
+            echo "FAIL: AWS account mismatch" >&2
+            exit 1
+        fi
+
+        if [[ "$ACTUAL_ARN" != "$EXPECTED_ARN" ]]; then
+            echo "FAIL: AWS principal mismatch" >&2
+            exit 1
+        fi
+
+        echo "PASS: Correct AWS account"
+        echo "PASS: Dedicated Capstone 03 publisher identity"
+        echo "PASS: AWS authentication successful"
+        echo "No ECR push or EC2 deployment performed"
+        '''
+                    }
+                }
+            }
+        }
+
+
     post {
         always {
             sh '''#!/usr/bin/env bash
