@@ -88,7 +88,15 @@ PY
                 sh '''#!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_TAG="${IMAGE_NAME}"
+env.IMAGE_REF = imageRef
+
+docker image inspect "$IMAGE_TAG" >/dev/null \
+    || {
+        echo "ERROR: Built Docker image not found: $IMAGE_TAG" >&2
+        exit 1
+    }
+
+echo "PASS: Using locally built image: $IMAGE_TAG"
 CONTAINER_NAME="cap03-ci-${BUILD_NUMBER}"
 APP_VERSION="$(git rev-parse --short=12 HEAD)"
 
