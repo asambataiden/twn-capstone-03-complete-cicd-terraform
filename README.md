@@ -4,6 +4,11 @@
 
 > **Verified on 1 November 2026:** Jenkins-based CI, ECR publication, and opt-in EC2 deployment through AWS Systems Manager completed successfully. An independent SSM readback confirmed image digest, application version and Docker health. Five mocked deployment/rollback regression tests passed in Jenkins. **Live failure-induced rollback has not been tested.** Official TWN certificate review is not claimed.
 
+
+## Engineering documentation
+
+The [documentation hub](docs/README.md) contains detailed [system architecture](docs/architecture/architecture-overview.md), [release and rollback diagrams](docs/architecture/release-and-rollback-flow.md), [deployment runbook](docs/operations/deployment-runbook.md), [execution evidence](docs/evidence/verification-register.md), [implemented use cases](docs/learning/implemented-use-cases.md) and a prioritized [automation improvement backlog](docs/improvements/automation-opportunities.md).
+
 ## Project objective
 
 Build a traceable CI/CD workflow for a containerized Python application using GitHub, Jenkins, a version-pinned Jenkins Shared Library, Docker, Amazon ECR, AWS Systems Manager, EC2 and Docker Compose. Provision and manage the supporting AWS environment with Terraform, while keeping infrastructure operations distinct from application delivery.
