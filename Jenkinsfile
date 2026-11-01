@@ -204,11 +204,12 @@ echo "PASS: Capstone 03 application smoke test"
         stage('AWS Identity Preflight') {
             steps {
                 withCredentials([
-                    usernamePassword(
+                    [
+                        $class: 'AmazonWebServicesCredentialsBinding',
                         credentialsId: 'twn-capstone03-ecr-publisher',
-                        usernameVariable: 'AWS_ACCESS_KEY_ID',
-                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                    )
+                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                    ]
                 ]) {
                     withEnv([
                         'AWS_DEFAULT_REGION=eu-north-1',
