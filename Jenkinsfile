@@ -17,6 +17,19 @@ pipeline {
     }
 
     stages {
+
+        stage('Validate Shared Library') {
+            steps {
+                script {
+                    library 'twn-devops-bootcamp-jenkins-shared-library@c514371'
+
+                    echo 'PASS: Jenkins Shared Library loaded successfully'
+                    echo 'PASS: Pinned to revision c514371'
+                    echo 'No ECR publishing or SSM deployment executed'
+                }
+            }
+        }
+
         stage('Checkout') {
             steps {
                 checkout scm
