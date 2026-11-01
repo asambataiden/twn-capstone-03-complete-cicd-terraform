@@ -54,39 +54,41 @@ PY
             }
         }
 
+
         stage('Build Docker Image') {
             steps {
-                sh '''#!/usr/bin/env bash
-set -euo pipefail
+                script {
+                    String gitSha = sh(
+                        script: 'git rev-parse --short=12 HEAD',
+                        returnStdout: true
+                    ).trim()
 
-IMAGE_TAG="${IMAGE_NAME}:${BUILD_NUMBER}"
+                    String imageRef = ecrBuild(
+                        accountId: '591132357918',
+                        region: 'eu-north-1',
+                        repository: 'twn-capstone-03-app',
+                        tag: "git-${gitSha}",
+                        dockerfile: 'app/Dockerfile',
+                        context: 'app',
+                        platform: 'linux/amd64'
+                    )
 
-docker buildx build \
-    --platform "$DOCKER_PLATFORM" \
-    --provenance=false \
-    --load \
-    --file app/Dockerfile \
-    --tag "$IMAGE_TAG" \
-    ./app
+                    env.IMAGE_REF = imageRef
 
-ACTUAL_PLATFORM="$(
-    docker image inspect "$IMAGE_TAG" \
-        --format '{{.Os}}/{{.Architecture}}'
-)"
-
-test "$ACTUAL_PLATFORM" = "$DOCKER_PLATFORM"
-
-echo "PASS: Image built for $ACTUAL_PLATFORM"
-'''
+                    echo 'PASS: Shared Library ecrBuild completed'
+                    echo "Local image: ${imageRef}"
+                    echo 'No ECR push performed'
+                }
             }
         }
+
 
         stage('Application Smoke Test') {
             steps {
                 sh '''#!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_TAG="${IMAGE_NAME}:${BUILD_NUMBER}"
+IMAGE_TAG="${IMAGE_NAME}"
 CONTAINER_NAME="cap03-ci-${BUILD_NUMBER}"
 APP_VERSION="$(git rev-parse --short=12 HEAD)"
 
