@@ -12,12 +12,10 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = 'capstone03-ci'
         DOCKER_PLATFORM = 'linux/amd64'
     }
 
     stages {
-
         stage('Validate Shared Library') {
             steps {
                 script {
@@ -33,6 +31,14 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+
+                sh '''#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Git revision ==="
+git rev-parse HEAD
+git log -1 --format='%s'
+'''
             }
         }
 
@@ -46,14 +52,16 @@ import ast
 from pathlib import Path
 
 source = Path("app/main.py")
-ast.parse(source.read_text(encoding="utf-8"))
+
+ast.parse(
+    source.read_text(encoding="utf-8")
+)
 
 print("PASS: Python source syntax")
 PY
 '''
             }
         }
-
 
         stage('Build Docker Image') {
             steps {
@@ -73,6 +81,7 @@ PY
                         platform: 'linux/amd64'
                     )
 
+                    // Publish image reference to later stages.
                     env.IMAGE_REF = imageRef
 
                     echo 'PASS: Shared Library ecrBuild completed'
@@ -82,29 +91,43 @@ PY
             }
         }
 
-
         stage('Application Smoke Test') {
             steps {
                 sh '''#!/usr/bin/env bash
 set -euo pipefail
 
-env.IMAGE_REF = imageRef
-
-docker image inspect "$IMAGE_TAG" >/dev/null \
-    || {
-        echo "ERROR: Built Docker image not found: $IMAGE_TAG" >&2
-        exit 1
-    }
-
-echo "PASS: Using locally built image: $IMAGE_TAG"
+# IMAGE_REF comes from the preceding Jenkins Groovy stage.
+IMAGE_TAG="${IMAGE_REF:?IMAGE_REF is not set}"
 CONTAINER_NAME="cap03-ci-${BUILD_NUMBER}"
 APP_VERSION="$(git rev-parse --short=12 HEAD)"
+
+echo "=== Verify locally built image ==="
+
+docker image inspect "$IMAGE_TAG" >/dev/null || {
+    echo "ERROR: Docker image not found: $IMAGE_TAG" >&2
+    exit 1
+}
+
+ACTUAL_PLATFORM="$(
+    docker image inspect "$IMAGE_TAG" \
+        --format '{{.Os}}/{{.Architecture}}'
+)"
+
+if [[ "$ACTUAL_PLATFORM" != "$DOCKER_PLATFORM" ]]; then
+    echo "ERROR: Architecture mismatch: $ACTUAL_PLATFORM" >&2
+    exit 1
+fi
+
+echo "PASS: Using locally built image: $IMAGE_TAG"
+echo "PASS: Image platform: $ACTUAL_PLATFORM"
 
 cleanup() {
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT
+
+echo "=== Start application container ==="
 
 docker run \
     --detach \
@@ -117,6 +140,8 @@ docker run \
     --security-opt no-new-privileges \
     --env "APP_VERSION=$APP_VERSION" \
     "$IMAGE_TAG"
+
+echo "=== Wait for application readiness ==="
 
 ready=0
 
@@ -132,10 +157,12 @@ for attempt in $(seq 1 30); do
 done
 
 if [[ "$ready" != "1" ]]; then
+    echo "FAIL: Application did not become healthy" >&2
     docker logs "$CONTAINER_NAME" >&2 || true
-    echo "FAIL: Application not healthy" >&2
     exit 1
 fi
+
+echo "=== Verify application endpoints ==="
 
 docker exec \
     --env "EXPECTED_VERSION=$APP_VERSION" \
@@ -147,21 +174,29 @@ import urllib.request
 
 base = "http://127.0.0.1:8080"
 
-with urllib.request.urlopen(base + "/health", timeout=3) as response:
+with urllib.request.urlopen(
+    base + "/health", timeout=3
+) as response:
     assert response.status == 200
-    assert json.load(response)["status"] == "healthy"
+    health = json.load(response)
+    assert health["status"] == "healthy"
 
-with urllib.request.urlopen(base + "/", timeout=3) as response:
+with urllib.request.urlopen(
+    base + "/", timeout=3
+) as response:
     assert response.status == 200
-    data = json.load(response)
-    assert data["application"] == "twn-capstone-03"
-    assert data["status"] == "running"
-    assert data["version"] == os.environ["EXPECTED_VERSION"]
+    application = json.load(response)
 
-print("PASS: Health, application and version verification")
+    assert application["application"] == "twn-capstone-03"
+    assert application["status"] == "running"
+    assert application["version"] == os.environ["EXPECTED_VERSION"]
+
+print("PASS: Health endpoint")
+print("PASS: Application endpoint")
+print("PASS: Application Git version")
 '
 
-echo "PASS: Capstone 03 smoke test"
+echo "PASS: Capstone 03 application smoke test"
 '''
             }
         }
@@ -172,17 +207,21 @@ echo "PASS: Capstone 03 smoke test"
             sh '''#!/usr/bin/env bash
 set +e
 
-docker rm -f "cap03-ci-${BUILD_NUMBER}" >/dev/null 2>&1
+docker rm -f "cap03-ci-${BUILD_NUMBER}" \
+    >/dev/null 2>&1
+
 echo "Temporary container cleanup checked"
 '''
         }
 
         success {
-            echo 'Capstone 03 CI validation successful.'
+            echo 'SUCCESS: Capstone 03 CI validation completed.'
+            echo 'No ECR push or SSM deployment performed.'
         }
 
         failure {
-            echo 'Capstone 03 CI validation failed.'
+            echo 'FAILURE: Capstone 03 CI validation failed.'
+            echo 'Review the failed stage in Jenkins Console Output.'
         }
     }
 }
