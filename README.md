@@ -2,151 +2,161 @@
 
 **TechWorld with Nana · AI-Enhanced DevOps Bootcamp · Capstone Project 03**
 
-> **Status:** CI pipeline implemented on a feature branch; end-to-end Terraform infrastructure provisioning and application deployment are **not verified**. Historical pipeline validation includes a successful deployment dry-run followed by a failed job due to an unset deployment-control variable. No deployment is claimed from that run.
+> **Verified on 1 November 2026:** Jenkins-based CI, ECR publication, and opt-in EC2 deployment through AWS Systems Manager completed successfully. An independent SSM readback confirmed image digest, application version and Docker health. Five mocked deployment/rollback regression tests passed in Jenkins. **Live failure-induced rollback has not been tested.** Official TWN certificate review is not claimed.
 
-## Project Objective
+## Project objective
 
-Design an automated delivery workflow using GitHub, Jenkins, Terraform, AWS EC2, Docker, and Docker Compose. Separate source validation, image build/test, artifact publication, infrastructure provisioning, application deployment, and operational verification.
+Build a traceable CI/CD workflow for a containerized Python application using GitHub, Jenkins, a version-pinned Jenkins Shared Library, Docker, Amazon ECR, AWS Systems Manager, EC2 and Docker Compose. Provision and manage the supporting AWS environment with Terraform, while keeping infrastructure operations distinct from application delivery.
 
-This repository is the portfolio record for the project. **Intended architecture is not the same as verified implementation.**
-
-## Intended Architecture
+## Architecture
 
 ```mermaid
 flowchart LR
-    GitHub[GitHub source] --> Jenkins[Jenkins CI/CD]
-    Jenkins --> Tests[Source validation and smoke tests]
-    Tests --> Registry[Amazon ECR]
-    Jenkins --> Terraform[Terraform infrastructure as code]
-    Terraform --> EC2[AWS EC2]
-    Registry --> EC2
+    GitHub[GitHub feature branch] --> Jenkins[Jenkins pipeline]
+    Jenkins --> Checks[Syntax, mocked rollback tests, container smoke test]
+    Checks --> ECR[Amazon ECR: immutable Git tag / digest]
+    Jenkins --> SSM[AWS Systems Manager SendCommand]
+    SSM --> EC2[Terraform-managed EC2 instance]
+    ECR --> EC2
     EC2 --> Compose[Docker Compose]
-    Compose --> App[Application and health checks]
+    Compose --> App[Python application on localhost:8080]
+    App --> Verify[Health, Git version and digest checks]
 ```
 
-## Implemented Jenkins CI Workflow
+Terraform provisions the EC2 infrastructure as a separate infrastructure-as-code workflow. **Do not interpret the diagram as evidence that Terraform apply runs in this Jenkinsfile.** The verified pipeline primarily builds, tests, publishes and deploys the application.
 
-The feature-branch [Jenkinsfile](Jenkinsfile) defines these stages:
+## Implementation
 
-1. Load a Jenkins Shared Library pinned to revision `c514371`.
-2. Checkout the source revision.
-3. Validate Python source syntax.
-4. Build an amd64 Docker image with the Shared Library's `ecrBuild`.
-5. Run a hardened temporary application container and test `/health`, `/`, and the application Git version.
-6. Verify the intended AWS account and dedicated ECR publisher identity.
-7. Publish an immutable Git-SHA-tagged image with `ecrPush`, and resolve its digest with `ecrImageDigest`.
-
-**Scope limitation:** The reviewed Jenkinsfile does not include Terraform provisioning, Docker Compose rollout, or AWS SSM deployment stages. Defined stages alone do not establish that every stage has passed in a completed run. Consult the corresponding Jenkins Console Output before asserting successful execution.
-
-## Project Status and Validation Evidence
-
-| Area | Current documented state |
+| Component | Source / design |
 |---|---|
-| GitHub repository | Created |
-| Jenkins CI pipeline | Implemented in `feat/capstone03-jenkins-ci-pipeline` |
-| Jenkins Shared Library | Configured with a pinned revision |
-| Source validation | Defined in Jenkinsfile; completed-run evidence not consolidated here |
-| Docker build and application smoke test | Defined in Jenkinsfile; completed-run evidence not consolidated here |
-| AWS identity preflight and ECR publication | Defined in Jenkinsfile; completed-run evidence not consolidated here |
-| Terraform deployment dry-run | Previously reported successful |
-| Terraform/deployment Jenkins job | Previously reported failed after dry-run: `APPLY_DEPLOYMENT` unbound under `set -u` |
-| AWS EC2 infrastructure provisioning | Not verified |
-| Docker Compose application rollout | Not verified |
-| End-to-end production-like deployment | Not verified |
-| Official TWN review | Not verified |
+| Application | `app/main.py`, `app/Dockerfile` (Python 3.13-slim base in observed Jenkins builds) |
+| Pipeline | [Jenkinsfile](Jenkinsfile): stages gated by validation and opt-in deployment |
+| Shared Library | [TWN Jenkins Shared Library](https://github.com/asambataiden/twn-devops-bootcamp-jenkins-shared-library), pinned to `c514371` |
+| Deployment wrapper | [scripts/deploy-ec2.sh](scripts/deploy-ec2.sh) |
+| EC2 Compose definition | [deploy/compose.ec2.yaml](deploy/compose.ec2.yaml) |
+| Regression tests | [tests/test_deploy.py](tests/test_deploy.py), Python standard-library `unittest` |
+| Target EC2 | `i-058aa03bdbb014833` in `eu-north-1` |
+| ECR repository | `591132357918.dkr.ecr.eu-north-1.amazonaws.com/twn-capstone-03-app` |
 
-### Historical Troubleshooting: Deployment Flag
+### Verified CI/CD stages
 
-A validation job reached a successful dry-run but then failed because an unset `APPLY_DEPLOYMENT` variable was referenced in a shell running with `set -u`.
+1. Load the Shared Library at a fixed revision, then checkout source.
+2. Check Python source syntax and Bash deployment-script syntax.
+3. Run five isolated deployment/rollback regression tests using mock Docker, AWS and HTTP commands.
+4. Build the `linux/amd64` image and run a hardened ephemeral container smoke test of `/`, `/health`, and the Git version.
+5. Validate AWS account and dedicated ECR publisher principal.
+6. Publish a Git-SHA-tagged image to ECR, or explicitly reuse an existing immutable tag; resolve its digest.
+7. Deploy **only when** `DEPLOY_TO_EC2=true` using a separate, restricted SSM deployer identity.
+8. On EC2, use instance-role authentication for image pulls, Docker Compose health checks, application version matching and image reference validation.
 
-For a **default-deny** deployment control, use:
+**Jenkins parameters:** `DEPLOY_TO_EC2=false` by default; `REUSE_PUBLISHED_IMAGE=false` by default. Reuse requires a previously published tag for the *current* Git commit. A successful redeploy with the same digest does not mean the application image bytes changed.
+
+### Security and release decisions
+
+- Store separate ECR publisher and SSM deployer credentials in Jenkins; the EC2 instance uses its own IAM role for ECR pulls.
+- Scope the deployer to the intended SSM target; remember that `AWS-RunShellScript` grants the ability to execute commands on that target.
+- Keep deployment opt-in and forbid concurrent builds.
+- Resolve and deploy an immutable `@sha256:` reference; record the source revision separately.
+- Use a local-only application port (`127.0.0.1:8080`), a read-only container filesystem, dropped capabilities and `no-new-privileges`.
+- Capture a healthy prior deployment before mutation; on failed rollout or release verification, attempt to restore the previously verified digest and version. Fail the Jenkins job even when rollback succeeds.
+- Test failure paths in an isolated mock environment before risking application availability.
+- Treat automated rollback as a best-effort recovery mechanism, **not** proof of zero downtime, availability during rollback, or successful recovery from all failures.
+
+## Verified execution evidence
+
+| Checkpoint | Evidence | Result |
+|---|---|---|
+| Jenkins CI-only quality gate | Commit `84a74d8a7966`; five regression tests and image smoke tests passed; image published to ECR; CD stage skipped | SUCCESS |
+| Jenkins-triggered hardened release | SSM Command ID `80c32db2-afb6-41a4-b11f-0bc333591541`; status `Success`, remote exit `0` | SUCCESS |
+| Independent post-deployment check | SSM Command ID `bf59b16b-5de3-428f-8120-0c481d91d857`; status `Success`, exit `0`, no stderr | SUCCESS |
+| Running container | `capstone03-app-1`, health `healthy` | VERIFIED |
+| Application version | `84a74d8a7966` via localhost JSON endpoint | VERIFIED |
+| Running image | `sha256:8a28d96d32b94457c37ceaf888f472bc1ac529e1cb5f85236db534d00290064d` | VERIFIED |
+| Rollback scenarios | Five mocked `unittest` cases, passing locally and in Jenkins | PASS (MOCKED) |
+| Forced live rollback | No failure-injection execution supplied | NOT VERIFIED |
+| TWN certificate approval | No official reviewer confirmation supplied | NOT VERIFIED |
+
+The image digest also appeared in earlier releases because the application image contents were unchanged. `APP_VERSION` records the Git commit of the rollout, not a cryptographic property of the image itself.
+
+## Deployment and safe validation
+
+For a CI-only run, leave `DEPLOY_TO_EC2=false`. Use `REUSE_PUBLISHED_IMAGE=false` only when the commit's immutable tag has not already been published. For an authorized redeploy of a published commit, set both `DEPLOY_TO_EC2=true` and `REUSE_PUBLISHED_IMAGE=true`, after reviewing the image digest and target.
+
+Local, non-deployment checks:
 
 ```bash
-APPLY_DEPLOYMENT="${APPLY_DEPLOYMENT:-false}"
-
-if [[ "$APPLY_DEPLOYMENT" == "true" ]]; then
-  echo "Deployment explicitly enabled"
-  # Invoke the separately reviewed deployment process here.
-else
-  echo "Validation-only mode: no deployment"
-fi
+bash -n scripts/deploy-ec2.sh
+python3 -m unittest discover -s tests -p 'test_deploy.py' -v
+git diff --check
 ```
 
-This illustrates safe handling of optional environment variables. **It is an example fix, not evidence that the historical failing job was rerun or corrected.** An actual deployment also requires authorization, reviewed infrastructure changes, and appropriate guardrails.
+Inspect current release using a **read-only** AWS SSM check and compare three independent signals: Docker `Config.Image` digest, Docker health state and application `version`. Never treat a successful SSM submission alone as verified runtime health.
 
-## Engineering Decisions and Security Practices
+## Troubleshooting and limitations
 
-- **Reproducibility:** Pin the Jenkins Shared Library revision and tag images with a source-derived identifier.
-- **Artifact integrity:** Verify that the published image reference matches the image tested by CI; resolve an immutable digest after publication.
-- **Least privilege:** Use a dedicated AWS publishing identity rather than personal, broad administrator credentials.
-- **Credential hygiene:** Bind AWS credentials through Jenkins credentials and do not commit secrets or console credentials.
-- **Container hardening:** Use a read-only filesystem, a temporary writable `/tmp`, dropped Linux capabilities, and `no-new-privileges` in the smoke test.
-- **Fail-fast validation:** Check source syntax, architecture, readiness, expected application responses, and cloud identity before advancing.
-- **Deployment safety:** Keep deployment opt-in, separate verification from mutation, and make destructive or billable actions explicitly reviewed.
-- **Traceability:** Keep Jenkins build links, sanitized console output, Git revisions, and deployment results with the portfolio evidence.
+- **Unbound deployment flag under `set -u`:** A historical job failed after a successful dry run because `APPLY_DEPLOYMENT` was unset. Explicitly default optional flags or use Jenkins boolean parameters; a passing stage does not override a failed job.
+- **Immutable ECR tag already exists:** Reuse the published image explicitly after confirming its provenance rather than attempting to overwrite the tag.
+- **Wrong or missing AWS identity:** Validate the specific caller and account, and separate publisher, deployer and EC2 pull permissions.
+- **Deployment failure:** Check the SSM command invocation output and exit code; distinguish `ROLLBACK SUCCESS` from `ROLLBACK FAILED`. A rollback that recovers service still means the requested release failed.
+- **Previous application unhealthy:** The current rollback design refuses to start a new deployment unless it can establish a healthy baseline.
+- **Rollback boundaries:** Recovery requires the prior image to remain locally available and its configuration to be compatible. No production-grade zero-downtime strategy or live rollback proof is claimed.
+- **Credential warning during Docker ECR login:** Docker may warn about temporary credential storage. The scripts use a temporary `DOCKER_CONFIG` with cleanup; do not expose registry tokens in build logs.
 
-These controls are visible in the source or are documented target practices; their presence does not prove external cloud configuration or runtime security posture.
+## TechWorld with Nana — Project Questions and Answers
 
-## TechWorld with Nana — Project Questions & Answers
+### 1. What was the objective of Capstone 03?
+To connect infrastructure management with a repeatable application CI/CD pipeline, automating source validation, container testing, artifact publication and remote EC2 deployment.
 
-### 1. What is the objective of Capstone 03?
+### 2. What did I implement in Jenkins?
+A parameter-gated pipeline using a pinned Shared Library, source validation, five rollback regression tests, Docker build/smoke tests, scoped AWS authentication, ECR publication and SSM-based EC2 deployment.
 
-To integrate continuous integration, infrastructure provisioning, and application delivery into a repeatable Jenkins-driven workflow using Terraform and AWS.
+### 3. What is Terraform responsible for?
+Provisioning and managing the AWS infrastructure declaratively. It has a separate lifecycle from the Jenkins application release pipeline; the observed Jenkinsfile does not perform `terraform apply`.
 
-### 2. What is the role of Jenkins?
+### 4. Why use a Jenkins Shared Library?
+To centralize reusable ECR image operations and SSM deployment orchestration. A fixed Shared Library revision makes builds more reproducible and auditable.
 
-Jenkins orchestrates source checkout, validation, building, smoke testing, cloud identity preflight, and artifact publication. Infrastructure and deployment stages are part of the overall project objective but not present in the reviewed feature-branch Jenkinsfile.
+### 5. Why use both Git tags and image digests?
+Git-SHA-derived tags link ECR artifacts to release metadata, while the image digest identifies the exact immutable container artifact. Two Git revisions can point to the same digest when the Docker build context is unchanged.
 
-### 3. Why use a Jenkins Shared Library?
+### 6. Why test the container before publishing?
+The smoke test checks architecture, readiness, HTTP endpoints and the reported version before ECR publication or EC2 deployment.
 
-It centralizes reusable pipeline functions, reduces duplicated Groovy logic, and supports consistent operations across projects. Pinning a revision improves reproducibility.
+### 7. How are cloud credentials separated?
+The publisher can publish to ECR, the dedicated SSM identity submits targeted deployment commands, and the EC2 instance role pulls images. Broad personal AWS credentials are not required by the Jenkins workflow.
 
-### 4. What is Terraform used for?
+### 8. How is deployment approval controlled?
+`DEPLOY_TO_EC2` defaults to false, and the CD stage executes only with explicit opt-in. Image reuse is separately controlled.
 
-Terraform declaratively manages cloud infrastructure and produces a reviewable execution plan. A validated plan or dry-run does not mean resources were created.
+### 9. What happens when a deployment or version check fails?
+The script attempts to restore the last healthy image and version and verifies recovery. It still exits nonzero so Jenkins records failure. Live rollback under an injected EC2 fault has not been demonstrated.
 
-### 5. Why use Docker and Amazon ECR?
+### 10. What is the difference between a successful SSM command and a verified release?
+SSM success proves remote command completion. Release verification also checks the running image digest, application version and container health. The latter was independently confirmed using a second SSM command.
 
-Docker packages an application into a portable image. ECR stores versioned images for deployment. Source-derived tags and immutable digests help connect the deployed artifact to the tested source.
+### 11. What did the deployment regression tests validate?
+Five mocked scenarios: successful release, version mismatch rollback, health failure rollback, rollback failure reporting and rejection of an unhealthy baseline.
 
-### 6. Why perform a container smoke test before publishing?
-
-It checks that the image runs, reports health, serves expected responses, and exposes the intended source version. This reduces the chance of publishing an immediately broken application.
-
-### 7. How are AWS credentials handled securely?
-
-Use dedicated, narrowly scoped identities and Jenkins credential bindings, avoid plaintext secrets in Git, and verify the expected cloud identity before performing cloud operations. For production evolution, prefer short-lived credentials where available.
-
-### 8. Why did the deployment validation fail after the dry-run?
-
-The shell referenced `APPLY_DEPLOYMENT` without defining it while `set -u` was enabled. The successful dry-run did not make the later job successful.
-
-### 9. What is the difference between validation and deployment?
-
-Validation checks configuration or intended changes without asserting that application infrastructure was mutated. Deployment actively creates or changes cloud resources and must have separate authorization and verification.
-
-### 10. What is still required for full Capstone 03 completion?
-
-Consolidate passing Jenkins build evidence; validate Terraform configuration and plans; confirm authorized provisioning and Docker Compose deployment; collect application health and operational evidence; review teardown and cost controls; and complete the TWN submission requirements.
+### 12. What remains before claiming production readiness?
+Live failure-path validation in an isolated nonproduction environment, more robust observability and notifications, disaster-recovery design, secret/role rotation or temporary credentials, provenance verification for reused artifacts, and security/cost review.
 
 ## What I Learned
 
-- **CI versus CD:** A Jenkins pipeline can build, test, and publish artifacts successfully without deploying infrastructure or applications.
-- **Pipeline modularity:** Shared Libraries are useful for repeatable container build and registry operations across projects.
-- **Immutable delivery:** Git-SHA tags and image digests make it easier to identify exactly what was tested and published.
-- **Secure automation:** Runtime hardening and preflight AWS identity checks are concrete safety controls, not just documentation conventions.
-- **Reliable shell scripting:** Strict shell modes surface configuration errors early, while deliberate defaults avoid accidental mutation when optional flags are missing.
-- **Infrastructure as Code:** A Terraform dry-run is a review checkpoint, not proof of provisioning.
-- **Evidence-based reporting:** A successful individual stage and an overall failed pipeline must be reported separately. Documentation must distinguish designed, implemented, tested, and deployed states.
-- **Operational maturity:** Production-quality delivery also requires least-privilege access, health checks, rollback/teardown planning, traceability, and controlled changes.
+- **CI and CD have different safety boundaries.** Source tests and image publishing can run without touching EC2; deployment must be explicitly authorized.
+- **A pipeline needs failure-path testing.** The five mocked cases exposed recovery behavior that a happy-path health check alone cannot establish.
+- **Use immutable artifacts.** Deploying an ECR digest removes ambiguity from mutable image tags.
+- **Track release metadata separately from image content.** Git revisions identify pipeline changes even when the application image digest remains unchanged.
+- **Least privilege is role-specific.** Jenkins publishing, Jenkins SSM orchestration and EC2 image pulls require different rights.
+- **Infrastructure and delivery are not interchangeable.** Terraform manages infrastructure; the verified Jenkinsfile deploys onto existing infrastructure.
+- **Operational evidence must be independent.** A second, read-only SSM invocation confirmed runtime health, image digest and application version after Jenkins reported success.
+- **Recovery must fail visibly.** Restoring the old release must not allow a broken requested deployment to appear successful in Jenkins.
+- **Documentation must reflect verified outcomes.** Mock tests, successful remote deployment, independent verification and untested live rollback are distinct claims.
 
-## Repository and Portfolio Links
+## Portfolio resources
 
 - [Capstone 03 repository](https://github.com/asambataiden/twn-capstone-03-complete-cicd-terraform)
-- [Capstone 03 Jenkins CI branch](https://github.com/asambataiden/twn-capstone-03-complete-cicd-terraform/tree/feat/capstone03-jenkins-ci-pipeline)
-- [Capstone 05 portfolio](https://github.com/asambataiden?tab=repositories&q=twn-capstone-05)
+- [Capstone 03 feature branch](https://github.com/asambataiden/twn-capstone-03-complete-cicd-terraform/tree/feat/capstone03-jenkins-ci-pipeline)
+- [Reusable Jenkins Shared Library](https://github.com/asambataiden/twn-devops-bootcamp-jenkins-shared-library)
 - [Capstone 06 — Website Monitoring and Recovery](https://github.com/asambataiden/twn-capstone-06-website-recovery)
 
-## Next Documentation Checkpoints
-
-Before merging this feature branch to `main` or submitting for the bootcamp badge, attach sanitized build output and validation artifacts, reconcile the exact Terraform/deployment job script with the documented default-deny flag, and update the status table only when corresponding evidence exists. **No deployment or infrastructure teardown should be initiated merely to refresh the documentation.**
+Before merging to `main` or applying for a badge, review this README against the infrastructure code, preserve sanitized Jenkins/SSM logs as evidence, check that no credentials are committed, and confirm repository visibility and TWN submission requirements.
