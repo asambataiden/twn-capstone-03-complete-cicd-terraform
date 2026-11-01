@@ -11,6 +11,13 @@ pipeline {
         skipDefaultCheckout()
     }
 
+    parameters {
+        booleanParam(name: 'DEPLOY_TO_EC2', defaultValue: false,
+                     description: 'Explicitly authorize SSM deployment to Capstone 03 EC2')
+        booleanParam(name: 'REUSE_PUBLISHED_IMAGE', defaultValue: false,
+                     description: 'Resolve existing immutable ECR tag instead of pushing again')
+    }
+
     environment {
         DOCKER_PLATFORM = 'linux/amd64'
     }
@@ -281,16 +288,20 @@ echo "PASS: Capstone 03 application smoke test"
                             ).trim()
                             String imageTag = "git-${gitSha}".toString()
 
-                            // ecrPush rejects existing tags: ECR is immutable.
-                            String publishedRef = ecrPush(
-                                accountId: '591132357918',
-                                region: 'eu-north-1',
-                                repository: 'twn-capstone-03-app',
-                                tag: imageTag
-                            )
-
-                            if (publishedRef != env.IMAGE_REF) {
-                                error('Published image reference differs from tested image')
+                            if (!params.REUSE_PUBLISHED_IMAGE) {
+                                // ECR tags are immutable. A second push of the same tag is rejected.
+                                String publishedRef = ecrPush(
+                                    accountId: '591132357918',
+                                    region: 'eu-north-1',
+                                    repository: 'twn-capstone-03-app',
+                                    tag: imageTag
+                                )
+                                if (publishedRef != env.IMAGE_REF) {
+                                    error('Published image reference differs from tested image')
+                                }
+                                echo "PASS: Published image: ${publishedRef}"
+                            } else {
+                                echo "Reusing immutable ECR tag: ${imageTag}"
                             }
 
                             String digestRef = ecrImageDigest(
@@ -300,9 +311,59 @@ echo "PASS: Capstone 03 application smoke test"
                                 tag: imageTag
                             )
                             env.IMAGE_DIGEST_REF = digestRef
-                            echo "PASS: Published image: ${publishedRef}"
-                            echo "PASS: Immutable image digest: ${digestRef}"
-                            echo 'No SSM deployment performed'
+                            echo "PASS: Resolved immutable image digest: ${digestRef}"
+                            echo 'SSM deployment is a separate opt-in stage'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to EC2 via SSM') {
+            when {
+                expression { params.DEPLOY_TO_EC2 == true }
+            }
+            steps {
+                // Provision this dedicated credential before enabling deployment.
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'twn-capstone03-ssm-deployer',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    withEnv([
+                        'AWS_DEFAULT_REGION=eu-north-1',
+                        'AWS_REGION=eu-north-1',
+                        'AWS_PAGER='
+                    ]) {
+                        script {
+                            if (env.BRANCH_NAME &&
+                                env.BRANCH_NAME != 'feat/capstone03-jenkins-ci-pipeline') {
+                                error('Deployment blocked: unexpected branch')
+                            }
+
+                            String sha = sh(
+                                script: 'git rev-parse --short=12 HEAD',
+                                returnStdout: true
+                            ).trim()
+
+                            if (!env.IMAGE_DIGEST_REF?.trim()) {
+                                error('Deployment blocked: missing immutable image digest')
+                            }
+
+                            String commandId = ssmDeploy(
+                                accountId: '591132357918',
+                                region: 'eu-north-1',
+                                instanceId: 'i-058aa03bdbb014833',
+                                imageRef: env.IMAGE_DIGEST_REF,
+                                appVersion: sha,
+                                composeFile: 'deploy/compose.ec2.yaml',
+                                deployScript: 'scripts/deploy-ec2.sh'
+                            )
+
+                            echo "PASS: SSM deployment completed: ${commandId}"
+                            echo "Deployed image: ${env.IMAGE_DIGEST_REF}"
+                            echo "Application version: ${sha}"
                         }
                     }
                 }
@@ -324,7 +385,7 @@ echo "Temporary container cleanup checked"
 
         success {
             echo 'SUCCESS: Capstone 03 CI validation completed.'
-            echo 'SSM deployment not performed.'
+            echo 'Check Deploy to EC2 stage for deployment status.'
         }
 
         failure {
