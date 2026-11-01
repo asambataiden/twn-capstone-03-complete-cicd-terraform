@@ -200,8 +200,6 @@ echo "PASS: Capstone 03 application smoke test"
 '''
             }
         }
-    }
-
 
         stage('AWS Identity Preflight') {
             steps {
@@ -259,7 +257,7 @@ echo "PASS: Capstone 03 application smoke test"
                 }
             }
         }
-
+    }
 
     post {
         always {
