@@ -1,6 +1,6 @@
 # TechWorld with Nana — Six-Capstone Submission Index
 
-**Purpose:** Public six-capstone review index for the DevOps Bootcamp badge portfolio. The main landing page is the [TWN DevOps Engineering Portfolio](https://github.com/asambataiden/twn-devops-bootcamp-portfolio). Technical evidence remains in individual repositories. Badge acceptance is not claimed.
+**Purpose:** Public six-capstone review index for the DevOps Bootcamp badge portfolio. The main landing page is the [TWN DevOps Engineering Portfolio](https://github.com/asambataiden/twn-devops-capstone-portfolio). Technical evidence remains in individual repositories. Badge acceptance is not claimed.
 
 | Capstone | Project | Main repository | Reviewer summary | Access last checked 2 Nov 2026 |
 |---|---|---|---|---|
